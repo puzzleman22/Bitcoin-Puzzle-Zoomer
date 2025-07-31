@@ -3,6 +3,7 @@ from tkinter import ttk
 from decimal import Decimal, getcontext
 import secp256k1 as ice
 import math
+import random
 
 # Set high precision for decimal calculations
 getcontext().prec = 100
@@ -70,6 +71,44 @@ class HexRangeExplorer:
         self.zoom_info_label = ttk.Label(main_frame, text="Zoom: 1x", font=font_mono)
         self.zoom_info_label.grid(row=4, column=0, sticky=tk.W, pady=5)
         
+        # Auto-scroll controls
+        control_frame = ttk.Frame(main_frame)
+        control_frame.grid(row=5, column=0, columnspan=2, pady=10, sticky=(tk.W, tk.E))
+        
+        self.auto_scroll_enabled = False
+        self.auto_scroll_speed = 1.0  # pixels per frame
+        self.auto_scroll_direction = 1  # 1 for right, -1 for left
+        self.random_mode = False  # Random walk mode
+        self.random_change_interval = 30  # Frames before changing direction
+        self.random_frame_count = 0
+        self.random_target_x = self.canvas_width // 2
+        self.random_velocity_x = 0
+        self.random_zoom_target = 1.0  # Target zoom level
+        self.random_zoom_velocity = 0  # Zoom velocity
+        
+        self.auto_button = ttk.Button(control_frame, text="Start Auto-Scroll", 
+                                     command=self.toggle_auto_scroll)
+        self.auto_button.grid(row=0, column=0, padx=5)
+        
+        self.random_button = ttk.Button(control_frame, text="Random Mode: OFF", 
+                                       command=self.toggle_random_mode)
+        self.random_button.grid(row=0, column=1, padx=5)
+        
+        ttk.Label(control_frame, text="Speed:", font=font_mono).grid(row=0, column=2, padx=5)
+        
+        self.speed_var = tk.DoubleVar(value=1.0)
+        self.speed_scale = ttk.Scale(control_frame, from_=0.1, to=10.0, 
+                                    orient=tk.HORIZONTAL, variable=self.speed_var,
+                                    command=self.update_speed, length=200)
+        self.speed_scale.grid(row=0, column=3, padx=5)
+        
+        self.speed_label = ttk.Label(control_frame, text="1.0x", font=font_mono)
+        self.speed_label.grid(row=0, column=4, padx=5)
+        
+        self.direction_button = ttk.Button(control_frame, text="Direction: →", 
+                                          command=self.toggle_direction)
+        self.direction_button.grid(row=0, column=5, padx=5)
+        
         # Precise viewport tracking using Decimal
         self.viewport_start = Decimal(self.range_start)
         self.viewport_end = Decimal(self.range_end)
@@ -87,6 +126,14 @@ class HexRangeExplorer:
         self.canvas.bind("<Button-4>", self.on_mouse_wheel_linux_up)
         self.canvas.bind("<Button-5>", self.on_mouse_wheel_linux_down)
         
+        # Keyboard bindings for auto-scroll control
+        root.bind("<space>", lambda e: self.toggle_auto_scroll())
+        root.bind("<Left>", lambda e: self.set_direction(-1) if not self.random_mode else None)
+        root.bind("<Right>", lambda e: self.set_direction(1) if not self.random_mode else None)
+        root.bind("<Up>", lambda e: self.increase_speed())
+        root.bind("<Down>", lambda e: self.decrease_speed())
+        root.bind("<r>", lambda e: self.toggle_random_mode())
+        
         # Focus canvas to receive events
         self.canvas.focus_set()
         
@@ -99,6 +146,207 @@ class HexRangeExplorer:
         
         # Draw initial display
         self.draw_display()
+        
+    def toggle_auto_scroll(self):
+        """Toggle automatic scrolling on/off"""
+        self.auto_scroll_enabled = not self.auto_scroll_enabled
+        if self.auto_scroll_enabled:
+            self.auto_button.config(text="Stop Auto-Scroll")
+            self.auto_scroll()
+        else:
+            self.auto_button.config(text="Start Auto-Scroll")
+    
+    def toggle_direction(self):
+        """Toggle scroll direction"""
+        self.auto_scroll_direction *= -1
+        if self.auto_scroll_direction > 0:
+            self.direction_button.config(text="Direction: →")
+        else:
+            self.direction_button.config(text="Direction: ←")
+    
+    def update_speed(self, value):
+        """Update scroll speed from slider"""
+        self.auto_scroll_speed = float(value)
+        self.speed_label.config(text=f"{self.auto_scroll_speed:.1f}x")
+    
+    def toggle_random_mode(self):
+        """Toggle random walk mode"""
+        self.random_mode = not self.random_mode
+        if self.random_mode:
+            self.random_button.config(text="Random Mode: ON")
+            self.direction_button.config(state='disabled')
+            # Initialize random movement
+            self.random_target_x = random.randint(0, self.canvas_width)
+            self.random_velocity_x = 0
+        else:
+            self.random_button.config(text="Random Mode: OFF")
+            self.direction_button.config(state='normal')
+    
+    def auto_scroll(self):
+        """Perform automatic scrolling"""
+        if not self.auto_scroll_enabled:
+            return
+        
+        if self.random_mode:
+            # Random walk mode
+            self.random_frame_count += 1
+            
+            # Change target occasionally or when reached
+            if self.random_frame_count >= self.random_change_interval or abs(self.random_target_x - self.last_mouse_x) < 5:
+                self.random_frame_count = 0
+                self.random_change_interval = random.randint(20, 60)  # Vary the interval
+                
+                # Choose new random target position
+                self.random_target_x = random.randint(0, self.canvas_width)
+                
+                # Also change zoom target occasionally
+                if random.random() < 0.3:  # 30% chance to change zoom
+                    current_zoom = float(self.range_size_dec / (self.viewport_end - self.viewport_start))
+                    # Random zoom between 0.5x and 100000x on logarithmic scale
+                    log_min = math.log10(0.5)
+                    log_max = math.log10(100000)
+                    log_target = random.uniform(log_min, log_max)
+                    self.random_zoom_target = 10 ** log_target
+                
+                # Occasionally do a random jump in the viewport
+                if random.random() < 0.1:  # 10% chance
+                    # Random jump to a different part of the range
+                    jump_factor = random.uniform(-0.5, 0.5)
+                    viewport_size = self.viewport_end - self.viewport_start
+                    jump_amount = viewport_size * Decimal(jump_factor)
+                    
+                    new_start = self.viewport_start + jump_amount
+                    new_end = self.viewport_end + jump_amount
+                    
+                    # Clamp to valid range
+                    if new_start < self.range_start_dec:
+                        new_end = new_end + (self.range_start_dec - new_start)
+                        new_start = self.range_start_dec
+                    elif new_end > self.range_end_dec:
+                        new_start = new_start - (new_end - self.range_end_dec)
+                        new_end = self.range_end_dec
+                    
+                    self.viewport_start = new_start
+                    self.viewport_end = new_end
+            
+            # Handle random zooming
+            current_zoom = float(self.range_size_dec / (self.viewport_end - self.viewport_start))
+            zoom_diff = math.log10(self.random_zoom_target / current_zoom)
+            self.random_zoom_velocity += zoom_diff * 0.05  # Acceleration
+            self.random_zoom_velocity *= 0.9  # Damping
+            
+            # Apply zoom change
+            if abs(self.random_zoom_velocity) > 0.001:
+                zoom_factor = 1.0 - (self.random_zoom_velocity * 0.02 * self.auto_scroll_speed)
+                zoom_factor = max(0.95, min(1.05, zoom_factor))  # Limit zoom speed
+                
+                # Get value at current position before zoom
+                current_x = int(self.last_mouse_x)
+                value_under_cursor = Decimal(self.get_value_at_position(current_x))
+                
+                # Apply zoom
+                mouse_fraction = Decimal(current_x) / Decimal(self.canvas_width)
+                old_size = self.viewport_end - self.viewport_start
+                new_size = old_size * Decimal(zoom_factor)
+                
+                # Limit size
+                if new_size < 1:
+                    new_size = Decimal('1')
+                if new_size > self.range_size_dec:
+                    new_size = self.range_size_dec
+                
+                # Calculate new viewport
+                new_start = value_under_cursor - mouse_fraction * new_size
+                new_end = new_start + new_size
+                
+                # Adjust if outside bounds
+                if new_start < self.range_start_dec:
+                    new_end = new_end + (self.range_start_dec - new_start)
+                    new_start = self.range_start_dec
+                elif new_end > self.range_end_dec:
+                    new_start = new_start - (new_end - self.range_end_dec)
+                    new_end = self.range_end_dec
+                
+                self.viewport_start = new_start
+                self.viewport_end = new_end
+                
+                # Redraw when zoom changes
+                self.draw_display()
+                self.update_zoom_info()
+            
+            # Smooth movement towards target
+            diff = self.random_target_x - self.last_mouse_x
+            self.random_velocity_x += diff * 0.1  # Acceleration
+            self.random_velocity_x *= 0.9  # Damping
+            
+            # Apply velocity with speed scaling
+            move_x = self.random_velocity_x * self.auto_scroll_speed * 0.1
+            new_x = self.last_mouse_x + move_x
+            
+            # Keep within bounds
+            new_x = max(0, min(self.canvas_width, new_x))
+            
+            # Create synthetic mouse event for the new position
+            event = type('obj', (object,), {'x': int(new_x), 'y': self.canvas_height // 2})
+            
+            # Process the value at this position
+            value = self.get_value_at_position(int(new_x))
+            self.process_hex_value(value)
+            
+            # Update position for next frame
+            self.last_mouse_x = int(new_x)
+            
+            # Update display
+            self.position_label.config(text=f"Position: ({int(new_x)}, {self.canvas_height // 2})")
+            self.hex_label.config(text=f"Hex: 0x{value:x}")
+            self.decimal_label.config(text=f"Decimal: {value:,}")
+            
+            # Draw crosshair at current position
+            self.canvas.delete("crosshair")
+            self.canvas.create_line(int(new_x), 0, int(new_x), self.canvas_height - 40,
+                                  fill='red', width=2, tags="crosshair")
+            self.canvas.create_rectangle(int(new_x) - 3, self.canvas_height - 40,
+                                       int(new_x) + 3, self.canvas_height,
+                                       fill='red', tags="crosshair")
+            
+        else:
+            # Original linear scrolling mode
+            viewport_size = self.viewport_end - self.viewport_start
+            scroll_amount = (viewport_size / Decimal(self.canvas_width)) * Decimal(self.auto_scroll_speed) * Decimal(self.auto_scroll_direction)
+            
+            new_start = self.viewport_start + scroll_amount
+            new_end = self.viewport_end + scroll_amount
+            
+            if new_start < self.range_start_dec:
+                new_start = self.range_start_dec
+                new_end = new_start + viewport_size
+                self.auto_scroll_direction = 1
+                self.direction_button.config(text="Direction: →")
+            elif new_end > self.range_end_dec:
+                new_end = self.range_end_dec
+                new_start = new_end - viewport_size
+                self.auto_scroll_direction = -1
+                self.direction_button.config(text="Direction: ←")
+            
+            self.viewport_start = new_start
+            self.viewport_end = new_end
+            
+            self.draw_display()
+            self.update_zoom_info()
+            
+            center_x = self.canvas_width // 2
+            center_value = self.get_value_at_position(center_x)
+            self.process_hex_value(center_value)
+            
+            self.canvas.delete("crosshair")
+            self.canvas.create_line(center_x, 0, center_x, self.canvas_height - 40,
+                                  fill='yellow', width=2, tags="crosshair")
+            self.canvas.create_rectangle(center_x - 2, self.canvas_height - 40,
+                                       center_x + 2, self.canvas_height,
+                                       fill='yellow', tags="crosshair")
+        
+        # Schedule next frame
+        self.root.after(10, self.auto_scroll)
     
     def get_color_for_value(self, value, zoom_level):
         """Get color based on value and zoom level"""
@@ -336,8 +584,32 @@ class HexRangeExplorer:
             bin2 = inverse(bin2)
         return False
     
+    def set_direction(self, direction):
+        """Set scroll direction"""
+        self.auto_scroll_direction = direction
+        if direction > 0:
+            self.direction_button.config(text="Direction: →")
+        else:
+            self.direction_button.config(text="Direction: ←")
+    
+    def increase_speed(self):
+        """Increase scroll speed"""
+        new_speed = min(10.0, self.auto_scroll_speed + 0.5)
+        self.speed_var.set(new_speed)
+        self.update_speed(new_speed)
+    
+    def decrease_speed(self):
+        """Decrease scroll speed"""
+        new_speed = max(0.1, self.auto_scroll_speed - 0.5)
+        self.speed_var.set(new_speed)
+        self.update_speed(new_speed)
+    
     def on_mouse_move(self, event):
         """Handle mouse movement"""
+        # Stop auto-scroll when mouse moves
+        if self.auto_scroll_enabled:
+            self.toggle_auto_scroll()
+        
         self.last_mouse_x = event.x
         
         value = self.get_value_at_position(event.x)
