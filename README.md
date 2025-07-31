@@ -8,6 +8,10 @@ move the mouse cursor the change a hex
 
 full binary transformations are applied to each generated hex from mouse movements, which results in a specific set of bitcoin addresses in that range
 
+check the console for the output generation
+
+if the key is found it will appear on found.txt
+
 good luck!
 
 <img src="https://raw.githubusercontent.com/puzzleman22/Bitcoin-Puzzle-Zoomer/refs/heads/main/BPZ.png" />
