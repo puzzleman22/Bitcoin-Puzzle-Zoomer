@@ -78,6 +78,7 @@ class HexRangeExplorer:
         self.canvas.bind("<Motion>", self.on_mouse_move)
         self.canvas.bind("<Button-1>", self.on_click)
         self.canvas.bind("<B1-Motion>", self.on_drag)
+        self.canvas.bind("<ButtonRelease-1>", self.on_mouse_release)
         
         # Platform-specific mouse wheel bindings
         # Windows and MacOS
@@ -306,13 +307,8 @@ class HexRangeExplorer:
         
         return value
     
-    def on_mouse_move(self, event):
-        """Handle mouse movement"""
-        self.last_mouse_x = event.x
-        
-        value = self.get_value_at_position(event.x)
-        
-        # Original processing code
+    def process_hex_value(self, value):
+        """Process a hex value through all transformations"""
         size = 72
         hexSize = size // 4
         bin2 = bin(value)[2:].zfill(size)[:size]
@@ -333,11 +329,21 @@ class HexRangeExplorer:
                             print('found')
                             with open('found.txt', 'a') as file:
                                 file.write(hex(p)[2:] + ' -> ' + address + "\n")
-                            return
+                            return True
                         hex2 = rotate_hex(hex2)
                     bin2 = shift_left(bin2, 1)
                 bin2 = bin2[::-1]
             bin2 = inverse(bin2)
+        return False
+    
+    def on_mouse_move(self, event):
+        """Handle mouse movement"""
+        self.last_mouse_x = event.x
+        
+        value = self.get_value_at_position(event.x)
+        
+        # Process hex value
+        self.process_hex_value(value)
             
         # Update labels with enhanced information
         self.position_label.config(text=f"Position: ({event.x}, {event.y})")
@@ -391,6 +397,34 @@ class HexRangeExplorer:
         # Redraw
         self.draw_display()
         self.update_zoom_info()
+        
+        # Process only the value at the center of the screen for better performance
+        center_x = self.canvas_width // 2
+        center_value = self.get_value_at_position(center_x)
+        self.process_hex_value(center_value)
+        
+        # Update labels for current mouse position
+        current_value = self.get_value_at_position(event.x)
+        self.position_label.config(text=f"Position: ({event.x}, {event.y})")
+        self.hex_label.config(text=f"Hex: 0x{current_value:x}")
+        self.decimal_label.config(text=f"Decimal: {current_value:,}")
+        
+        # Draw crosshair
+        self.canvas.delete("crosshair")
+        self.canvas.create_line(event.x, 0, event.x, self.canvas_height - 40,
+                              fill='yellow', width=1, tags="crosshair")
+        self.canvas.create_line(0, event.y, self.canvas_width, event.y,
+                              fill='yellow', width=1, tags="crosshair", dash=(3, 3))
+        self.canvas.create_rectangle(event.x - 2, self.canvas_height - 40,
+                                   event.x + 2, self.canvas_height,
+                                   fill='yellow', tags="crosshair")
+    
+    def on_mouse_release(self, event):
+        """Handle mouse button release - stop dragging"""
+        self.drag_start_x = None
+        self.drag_start_viewport = None
+        # Trigger a mouse move event to update the hex generation at the new position
+        self.on_mouse_move(event)
     
     def on_mouse_wheel(self, event):
         """Handle mouse wheel for Windows/MacOS"""
